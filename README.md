@@ -116,3 +116,9 @@ rm -rf "$HOME/Applications/Mac Cleaner.app"
 ## Memory Usage
 - CLI: `mac-cleaner memory` atau `mac-cleaner memory --json`
 - GUI: card `Memory` di Overview menampilkan total/used/free + active/wired/compressed
+
+## End-to-End Test
+Jalankan regresi otomatis CLI:
+```bash
+./scripts/e2e-test.sh
+```
