@@ -43,6 +43,8 @@ public final class CleanupService {
     private let executor: CleanupExecuting
     private let restoreService: RestoreServicing
     private let diskUsageService: DiskUsageProviding
+    private let memoryUsageService: MemoryUsageProviding
+    private let runningAppsService: RunningAppsProviding
     private let storageBreakdownService: StorageBreakdownProviding
     private let installedSoftwareService: InstalledSoftwareProviding
     private let duplicateFinder: DuplicateFinding
@@ -56,6 +58,8 @@ public final class CleanupService {
         executor: CleanupExecuting = CleanupExecutor(),
         restoreService: RestoreServicing = RestoreService(),
         diskUsageService: DiskUsageProviding = DiskUsageService(),
+        memoryUsageService: MemoryUsageProviding = MemoryUsageService(),
+        runningAppsService: RunningAppsProviding = RunningAppsService(),
         storageBreakdownService: StorageBreakdownProviding = StorageBreakdownService(),
         installedSoftwareService: InstalledSoftwareProviding = InstalledSoftwareService(),
         duplicateFinder: DuplicateFinding = DuplicateFinder(),
@@ -68,6 +72,8 @@ public final class CleanupService {
         self.executor = executor
         self.restoreService = restoreService
         self.diskUsageService = diskUsageService
+        self.memoryUsageService = memoryUsageService
+        self.runningAppsService = runningAppsService
         self.storageBreakdownService = storageBreakdownService
         self.installedSoftwareService = installedSoftwareService
         self.duplicateFinder = duplicateFinder
@@ -104,6 +110,18 @@ public final class CleanupService {
 
     public func storageUsage() throws -> DiskUsage {
         try diskUsageService.currentUsage()
+    }
+
+    public func memoryUsage() throws -> MemoryUsage {
+        try memoryUsageService.currentUsage()
+    }
+
+    public func runningApps() -> [RunningAppInfo] {
+        runningAppsService.listRunningApps()
+    }
+
+    public func closeRunningApp(pid: Int32) -> Bool {
+        runningAppsService.closeApp(pid: pid)
     }
 
     public func storageBreakdown() throws -> StorageBreakdown {

@@ -169,6 +169,36 @@ struct MacCleanerCLIApp {
                 exit(1)
             }
 
+        case let .memory(json):
+            do {
+                let memory = try service.memoryUsage()
+                if json {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    if let data = try? encoder.encode(memory), let output = String(data: data, encoding: .utf8) {
+                        print(output)
+                    }
+                } else {
+                    let total = ByteCountFormatter.string(fromByteCount: memory.totalBytes, countStyle: .memory)
+                    let used = ByteCountFormatter.string(fromByteCount: memory.usedBytes, countStyle: .memory)
+                    let free = ByteCountFormatter.string(fromByteCount: memory.freeBytes, countStyle: .memory)
+                    let active = ByteCountFormatter.string(fromByteCount: memory.activeBytes, countStyle: .memory)
+                    let wired = ByteCountFormatter.string(fromByteCount: memory.wiredBytes, countStyle: .memory)
+                    let compressed = ByteCountFormatter.string(fromByteCount: memory.compressedBytes, countStyle: .memory)
+                    let percent = Int((memory.usedRatio * 100).rounded())
+                    print("Memory total      : \(total)")
+                    print("Memory used       : \(used) (\(percent)%)")
+                    print("Memory free       : \(free)")
+                    print("Memory active     : \(active)")
+                    print("Memory wired      : \(wired)")
+                    print("Memory compressed : \(compressed)")
+                }
+                exit(0)
+            } catch {
+                print("Failed to read memory usage: \(error.localizedDescription)")
+                exit(1)
+            }
+
         case let .duplicates(json, includeReview, limit, groups):
             let duplicateGroups = await service.duplicateGroups(
                 includeReviewItems: includeReview,

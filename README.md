@@ -54,6 +54,7 @@ Atau jalankan GUI langsung tanpa install:
 ```bash
 mac-cleaner help
 mac-cleaner storage
+mac-cleaner memory
 mac-cleaner duplicates
 mac-cleaner clean-duplicates --yes
 mac-cleaner rules
@@ -110,3 +111,8 @@ rm -rf "$HOME/Applications/Mac Cleaner.app"
 - Menampilkan estimasi terakhir digunakan (relative time).
 - Memberi rekomendasi aplikasi kandidat uninstall (jarang/tidak pernah dipakai dan size besar).
 - Tombol `Uninstall` (move to Trash) dan tombol `Install` (buka pencarian App Store).
+
+
+## Memory Usage
+- CLI: `mac-cleaner memory` atau `mac-cleaner memory --json`
+- GUI: card `Memory` di Overview menampilkan total/used/free + active/wired/compressed

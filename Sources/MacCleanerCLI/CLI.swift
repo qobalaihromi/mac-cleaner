@@ -7,6 +7,7 @@ enum CLICommand {
     case cleanDuplicates(yes: Bool, includeReview: Bool, limit: Int?, groups: Int?)
     case restore(yes: Bool, latest: Bool, manifestPath: String?)
     case storage(json: Bool)
+    case memory(json: Bool)
     case duplicates(json: Bool, includeReview: Bool, limit: Int?, groups: Int?)
     case rules
     case initConfig
@@ -48,6 +49,8 @@ enum CLIParser {
             )
         case "storage":
             return .storage(json: flags.contains("--json"))
+        case "memory":
+            return .memory(json: flags.contains("--json"))
         case "duplicates":
             return .duplicates(
                 json: flags.contains("--json"),
@@ -76,6 +79,7 @@ enum CLIParser {
           mac-cleaner clean-duplicates [--yes] [--include-review] [--limit N] [--groups N]
           mac-cleaner restore [--latest] [--manifest PATH] [--yes]
           mac-cleaner storage [--json]
+          mac-cleaner memory [--json]
           mac-cleaner duplicates [--json] [--include-review] [--limit N] [--groups N]
           mac-cleaner rules
           mac-cleaner init-config

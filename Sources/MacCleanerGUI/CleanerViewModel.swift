@@ -1,5 +1,5 @@
 import Foundation
-import MacCleanerCore
+@preconcurrency import MacCleanerCore
 
 struct CategoryUsageRow: Identifiable {
     let id: String
@@ -27,7 +27,9 @@ final class CleanerViewModel: ObservableObject {
     @Published var isRestoring = false
     @Published var isAnalyzingStorage = false
     @Published var isLoadingInstalledApps = false
+    @Published var isLoadingRunningApps = false
     @Published var isUninstallingApp = false
+    @Published var isClosingRunningApp = false
     @Published var includeReview = false
     @Published var limitText = ""
     @Published var statusMessage = "Ready"
@@ -36,9 +38,18 @@ final class CleanerViewModel: ObservableObject {
     @Published var storageUsedBytes: Int64 = 0
     @Published var storageFreeBytes: Int64 = 0
     @Published var storageUsedRatio: Double = 0
+    @Published var memoryTotalBytes: Int64 = 0
+    @Published var memoryUsedBytes: Int64 = 0
+    @Published var memoryFreeBytes: Int64 = 0
+    @Published var memoryUsedRatio: Double = 0
+    @Published var memoryActiveBytes: Int64 = 0
+    @Published var memoryWiredBytes: Int64 = 0
+    @Published var memoryCompressedBytes: Int64 = 0
     @Published var storageBreakdownCategories: [StorageCategoryUsage] = []
     @Published var installedApps: [InstalledAppInfo] = []
     @Published var showRecommendedAppsOnly = true
+    @Published var runningApps: [RunningAppInfo] = []
+    @Published var showRecommendedRunningAppsOnly = true
     @Published var duplicateGroups: [DuplicateFileGroup] = []
     @Published var duplicateItemsToDelete: [FileItem] = []
 
@@ -61,6 +72,13 @@ final class CleanerViewModel: ObservableObject {
             return installedApps.filter { $0.recommendation == .uninstallCandidate }
         }
         return installedApps
+    }
+
+    var visibleRunningApps: [RunningAppInfo] {
+        if showRecommendedRunningAppsOnly {
+            return runningApps.filter { $0.recommendedToClose }
+        }
+        return runningApps
     }
 
     var categoryUsageRows: [CategoryUsageRow] {
@@ -115,8 +133,10 @@ final class CleanerViewModel: ObservableObject {
 
     init() {
         refreshStorage()
+        refreshMemory()
         analyzeStorageBreakdown()
         loadInstalledApps()
+        loadRunningApps()
     }
 
     func scan() {
@@ -132,8 +152,10 @@ final class CleanerViewModel: ObservableObject {
             isScanning = false
             statusMessage = "Scan complete: \(scanned.count) files"
             refreshStorage()
+            refreshMemory()
             analyzeStorageBreakdown()
             loadInstalledApps()
+            loadRunningApps()
         }
     }
 
@@ -159,7 +181,9 @@ final class CleanerViewModel: ObservableObject {
             duplicateItemsToDelete = []
             isCleaning = false
             refreshStorage()
+            refreshMemory()
             analyzeStorageBreakdown()
+            loadRunningApps()
         }
     }
 
@@ -202,8 +226,10 @@ final class CleanerViewModel: ObservableObject {
             duplicateGroups = refreshedPlan.groups
             duplicateItemsToDelete = refreshedPlan.itemsToDelete
             refreshStorage()
+            refreshMemory()
             analyzeStorageBreakdown()
             loadInstalledApps()
+            loadRunningApps()
             isCleaningDuplicates = false
         }
     }
@@ -229,8 +255,10 @@ final class CleanerViewModel: ObservableObject {
                 duplicateGroups = []
                 duplicateItemsToDelete = []
                 refreshStorage()
+                refreshMemory()
                 analyzeStorageBreakdown()
                 loadInstalledApps()
+                loadRunningApps()
             } catch {
                 statusMessage = "Restore failed: \(error.localizedDescription)"
             }
@@ -251,26 +279,83 @@ final class CleanerViewModel: ObservableObject {
         }
     }
 
+    func refreshMemory() {
+        do {
+            let memory = try service.memoryUsage()
+            memoryTotalBytes = memory.totalBytes
+            memoryUsedBytes = memory.usedBytes
+            memoryFreeBytes = memory.freeBytes
+            memoryUsedRatio = memory.usedRatio
+            memoryActiveBytes = memory.activeBytes
+            memoryWiredBytes = memory.wiredBytes
+            memoryCompressedBytes = memory.compressedBytes
+        } catch {
+            statusMessage = "Failed to read memory usage"
+        }
+    }
+
     func analyzeStorageBreakdown() {
         guard !isAnalyzingStorage else { return }
         isAnalyzingStorage = true
-        Task {
+        let service = self.service
+        DispatchQueue.global(qos: .userInitiated).async {
             let result = try? service.storageBreakdown()
-            if let result {
-                storageBreakdownCategories = result.categories
+            DispatchQueue.main.async {
+                if let result {
+                    self.storageBreakdownCategories = result.categories
+                }
+                self.isAnalyzingStorage = false
             }
-            isAnalyzingStorage = false
         }
     }
 
     func loadInstalledApps() {
         guard !isLoadingInstalledApps else { return }
         isLoadingInstalledApps = true
+        let service = self.service
+        DispatchQueue.global(qos: .userInitiated).async {
+            let apps = service.installedApps()
+            DispatchQueue.main.async {
+                self.installedApps = apps
+                self.isLoadingInstalledApps = false
+            }
+        }
+    }
+
+    func loadRunningApps() {
+        guard !isLoadingRunningApps else { return }
+        isLoadingRunningApps = true
+        let service = self.service
+        DispatchQueue.global(qos: .userInitiated).async {
+            let apps = service.runningApps()
+            DispatchQueue.main.async {
+                self.runningApps = apps
+                self.isLoadingRunningApps = false
+            }
+        }
+    }
+
+    func closeRunningApp(_ app: RunningAppInfo) {
+        guard !isClosingRunningApp else { return }
+        guard app.canCloseSafely else {
+            statusMessage = "App ini tidak direkomendasikan untuk ditutup"
+            return
+        }
+
+        isClosingRunningApp = true
+        statusMessage = "Closing \(app.name)..."
 
         Task {
-            let apps = service.installedApps()
-            installedApps = apps
-            isLoadingInstalledApps = false
+            let closed = service.closeRunningApp(pid: app.pid)
+            if closed {
+                statusMessage = "Sent close request to \(app.name)"
+            } else {
+                statusMessage = "Failed to close \(app.name)"
+            }
+
+            refreshMemory()
+            loadRunningApps()
+            isClosingRunningApp = false
         }
     }
 

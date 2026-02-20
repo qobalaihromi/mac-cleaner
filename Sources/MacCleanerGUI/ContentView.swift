@@ -1,50 +1,107 @@
 import AppKit
 import SwiftUI
-import MacCleanerCore
+@preconcurrency import MacCleanerCore
 
 struct ContentView: View {
+    enum AppSection: String, CaseIterable, Identifiable {
+        case overview
+        case insights
+        case software
+        case duplicates
+        case files
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .overview: return "Overview"
+            case .insights: return "Insights"
+            case .software: return "Installed Software"
+            case .duplicates: return "Duplicate Finder"
+            case .files: return "Scanned Files"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .overview: return "gauge"
+            case .insights: return "chart.bar"
+            case .software: return "app.badge"
+            case .duplicates: return "doc.on.doc"
+            case .files: return "doc.text.magnifyingglass"
+            }
+        }
+    }
+
     @StateObject private var viewModel = CleanerViewModel()
+    @State private var selectedSection: AppSection = .overview
     @State private var showCleanConfirm = false
     @State private var showCleanDuplicatesConfirm = false
     @State private var showRestoreConfirm = false
     @State private var appToUninstall: InstalledAppInfo?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            storageCard
-            storageOverview
-            controls
-            summary
-            visualInsights
-            softwareInsights
-            duplicateInsights
-            fileList
-            footer
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    controlBar
+                    sectionContent
+                    footer
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.visible)
+            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .padding(16)
-        .frame(minWidth: 980, minHeight: 640)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 1100, minHeight: 720)
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                Button {
+                    viewModel.scan()
+                } label: {
+                    Label("Scan", systemImage: "magnifyingglass")
+                }
+                .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isCleaningDuplicates)
+
+                Button {
+                    viewModel.refreshStorage()
+                    viewModel.refreshMemory()
+                    viewModel.analyzeStorageBreakdown()
+                    viewModel.loadInstalledApps()
+                    viewModel.loadRunningApps()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isFindingDuplicates || viewModel.isCleaningDuplicates)
+
+                Button {
+                    viewModel.findDuplicates()
+                } label: {
+                    Label("Find Duplicates", systemImage: "doc.on.doc")
+                }
+                .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isFindingDuplicates || viewModel.isCleaningDuplicates || viewModel.items.isEmpty)
+            }
+        }
         .alert("Move selected files to Trash?", isPresented: $showCleanConfirm) {
             Button("Cancel", role: .cancel) {}
-            Button("Clean", role: .destructive) {
-                viewModel.clean()
-            }
+            Button("Clean", role: .destructive) { viewModel.clean() }
         } message: {
             Text("This action moves files to Trash. You can restore from Trash if needed.")
         }
         .alert("Restore last cleanup?", isPresented: $showRestoreConfirm) {
             Button("Cancel", role: .cancel) {}
-            Button("Restore", role: .destructive) {
-                viewModel.restoreLatestCleanup()
-            }
+            Button("Restore", role: .destructive) { viewModel.restoreLatestCleanup() }
         } message: {
             Text("This will try to move files from Trash back to their original locations using the latest manifest.")
         }
         .alert("Clean duplicate copies?", isPresented: $showCleanDuplicatesConfirm) {
             Button("Cancel", role: .cancel) {}
-            Button("Clean Duplicates", role: .destructive) {
-                viewModel.cleanDuplicateCopies()
-            }
+            Button("Clean Duplicates", role: .destructive) { viewModel.cleanDuplicateCopies() }
         } message: {
             Text("This keeps one copy per duplicate group and moves the other copies to Trash.")
         }
@@ -53,13 +110,9 @@ struct ContentView: View {
         }, set: { isPresented in
             if !isPresented { appToUninstall = nil }
         })) {
-            Button("Cancel", role: .cancel) {
-                appToUninstall = nil
-            }
+            Button("Cancel", role: .cancel) { appToUninstall = nil }
             Button("Uninstall", role: .destructive) {
-                if let app = appToUninstall {
-                    viewModel.uninstallApp(app)
-                }
+                if let app = appToUninstall { viewModel.uninstallApp(app) }
                 appToUninstall = nil
             }
         } message: {
@@ -67,95 +120,266 @@ struct ContentView: View {
         }
     }
 
+    private var sidebar: some View {
+        List(selection: $selectedSection) {
+            Section("Mac Cleaner") {
+                ForEach(AppSection.allCases) { section in
+                    NavigationLink(value: section) {
+                        Label(section.title, systemImage: section.systemImage)
+                    }
+                }
+            }
+
+            Section("Quick Status") {
+                HStack {
+                    Text("Used")
+                    Spacer()
+                    Text("\(Int((viewModel.storageUsedRatio * 100).rounded()))%")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Candidates")
+                    Spacer()
+                    Text("\(viewModel.totalFiles)")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Duplicates")
+                    Spacer()
+                    Text("\(viewModel.duplicateGroups.count)")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Memory")
+                    Spacer()
+                    Text("\(Int((viewModel.memoryUsedRatio * 100).rounded()))%")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Running Apps")
+                    Spacer()
+                    Text("\(viewModel.runningApps.count)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
     private var header: some View {
-        HStack {
-            Text("Mac Cleaner")
-                .font(.system(size: 28, weight: .bold))
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Mac Cleaner")
+                    .font(.largeTitle.weight(.semibold))
+                Text(selectedSection.title)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
+
             Text(viewModel.statusMessage)
-                .font(.callout)
+                .font(.caption)
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
         }
     }
 
-    private var controls: some View {
-        HStack(spacing: 12) {
-            Toggle("Include review risk", isOn: $viewModel.includeReview)
+    private var controlBar: some View {
+        HStack(spacing: 10) {
+            Toggle("Include review", isOn: $viewModel.includeReview)
                 .toggleStyle(.switch)
-                .frame(width: 220)
+                .frame(width: 180)
 
             HStack(spacing: 6) {
                 Text("Limit")
+                    .foregroundStyle(.secondary)
                 TextField("No limit", text: $viewModel.limitText)
-                    .frame(width: 80)
+                    .frame(width: 90)
                     .textFieldStyle(.roundedBorder)
             }
 
-            Button {
+            Divider().frame(height: 20)
+
+            Button(viewModel.isScanning ? "Scanning..." : "Scan") {
                 viewModel.scan()
-            } label: {
-                Text(viewModel.isScanning ? "Scanning..." : "Scan")
             }
+            .keyboardShortcut("r", modifiers: [.command])
+            .buttonStyle(.borderedProminent)
             .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isCleaningDuplicates)
 
-            Button {
+            Button("Refresh") {
                 viewModel.refreshStorage()
+                viewModel.refreshMemory()
                 viewModel.analyzeStorageBreakdown()
                 viewModel.loadInstalledApps()
-            } label: {
-                Text("Refresh Storage")
+                viewModel.loadRunningApps()
             }
+            .buttonStyle(.bordered)
             .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isFindingDuplicates || viewModel.isCleaningDuplicates)
 
-            Button {
+            Button(viewModel.isFindingDuplicates ? "Finding..." : "Find Duplicates") {
                 viewModel.findDuplicates()
-            } label: {
-                Text(viewModel.isFindingDuplicates ? "Finding..." : "Find Duplicates")
             }
+            .buttonStyle(.bordered)
             .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isFindingDuplicates || viewModel.isCleaningDuplicates || viewModel.items.isEmpty)
 
-            Button {
+            Button(viewModel.isCleaning ? "Cleaning..." : "Clean Selected") {
                 showCleanConfirm = true
-            } label: {
-                Text(viewModel.isCleaning ? "Cleaning..." : "Clean Selected")
             }
+            .buttonStyle(.bordered)
             .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isFindingDuplicates || viewModel.isCleaningDuplicates || viewModel.items.isEmpty)
 
-            Button {
+            Button(viewModel.isRestoring ? "Restoring..." : "Restore Last Cleanup") {
                 showRestoreConfirm = true
-            } label: {
-                Text(viewModel.isRestoring ? "Restoring..." : "Restore Last Cleanup")
             }
+            .buttonStyle(.bordered)
             .disabled(viewModel.isScanning || viewModel.isCleaning || viewModel.isFindingDuplicates || viewModel.isCleaningDuplicates || viewModel.isRestoring)
         }
+        .controlSize(.small)
+        .cardStyle()
+    }
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        Group {
+            switch selectedSection {
+            case .overview:
+                storageCard
+                memoryCard
+                runningAppsCard
+                storageOverview
+                summaryCard
+            case .insights:
+                visualInsights
+            case .software:
+                softwareInsights
+            case .duplicates:
+                duplicateInsights
+            case .files:
+                fileList
+            }
+        }
+        .id(selectedSection.id)
+        .transition(.opacity.combined(with: .move(edge: .trailing)))
+        .animation(.easeInOut(duration: 0.2), value: selectedSection)
     }
 
     private var storageCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Storage")
                 .font(.headline)
 
-            HStack(spacing: 16) {
-                Text("Total: \(ByteCountFormatter.string(fromByteCount: viewModel.storageTotalBytes, countStyle: .file))")
-                Text("Used: \(ByteCountFormatter.string(fromByteCount: viewModel.storageUsedBytes, countStyle: .file))")
-                Text("Free: \(ByteCountFormatter.string(fromByteCount: viewModel.storageFreeBytes, countStyle: .file))")
+            HStack(spacing: 18) {
+                metric(label: "Total", value: ByteCountFormatter.string(fromByteCount: viewModel.storageTotalBytes, countStyle: .file))
+                metric(label: "Used", value: ByteCountFormatter.string(fromByteCount: viewModel.storageUsedBytes, countStyle: .file))
+                metric(label: "Free", value: ByteCountFormatter.string(fromByteCount: viewModel.storageFreeBytes, countStyle: .file))
+                Spacer()
+                Text("\(Int((viewModel.storageUsedRatio * 100).rounded()))% used")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .font(.subheadline)
 
             ProgressView(value: viewModel.storageUsedRatio)
                 .progressViewStyle(.linear)
-
-            Text("Used \(Int((viewModel.storageUsedRatio * 100).rounded()))%")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text("Tip: kosongkan Limit atau isi 0 untuk proses semua file.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .tint(.accentColor)
         }
-        .padding(12)
-        .background(Color.gray.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .cardStyle()
+    }
+
+    private var memoryCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Memory")
+                .font(.headline)
+
+            HStack(spacing: 18) {
+                metric(label: "Total", value: ByteCountFormatter.string(fromByteCount: viewModel.memoryTotalBytes, countStyle: .memory))
+                metric(label: "Used", value: ByteCountFormatter.string(fromByteCount: viewModel.memoryUsedBytes, countStyle: .memory))
+                metric(label: "Free", value: ByteCountFormatter.string(fromByteCount: viewModel.memoryFreeBytes, countStyle: .memory))
+                metric(label: "Active", value: ByteCountFormatter.string(fromByteCount: viewModel.memoryActiveBytes, countStyle: .memory))
+                metric(label: "Wired", value: ByteCountFormatter.string(fromByteCount: viewModel.memoryWiredBytes, countStyle: .memory))
+                metric(label: "Compressed", value: ByteCountFormatter.string(fromByteCount: viewModel.memoryCompressedBytes, countStyle: .memory))
+                Spacer()
+                Text("\(Int((viewModel.memoryUsedRatio * 100).rounded()))% used")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(value: viewModel.memoryUsedRatio)
+                .progressViewStyle(.linear)
+                .tint(.mint)
+        }
+        .cardStyle()
+    }
+
+    private var runningAppsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Running Apps Memory")
+                    .font(.headline)
+
+                Toggle("Only recommended close", isOn: $viewModel.showRecommendedRunningAppsOnly)
+                    .toggleStyle(.switch)
+                    .frame(width: 230)
+
+                Spacer()
+
+                Button(viewModel.isLoadingRunningApps ? "Loading..." : "Refresh Running Apps") {
+                    viewModel.loadRunningApps()
+                    viewModel.refreshMemory()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(viewModel.isLoadingRunningApps || viewModel.isClosingRunningApp)
+            }
+
+            if viewModel.visibleRunningApps.isEmpty {
+                emptyState(
+                    title: "No running app recommendation",
+                    subtitle: "Tidak ada app non-system yang direkomendasikan untuk ditutup sekarang.",
+                    symbol: "memorychip"
+                )
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.visibleRunningApps.prefix(12)), id: \.id) { app in
+                        HStack(spacing: 10) {
+                            Text(app.name)
+                                .frame(width: 190, alignment: .leading)
+                                .lineLimit(1)
+
+                            Text(ByteCountFormatter.string(fromByteCount: app.memoryBytes, countStyle: .memory))
+                                .font(.caption.monospacedDigit())
+                                .frame(width: 90, alignment: .trailing)
+
+                            Text(app.isActive ? "Active" : "Background")
+                                .foregroundStyle(app.isActive ? .green : .secondary)
+                                .frame(width: 90, alignment: .leading)
+
+                            Text(app.recommendationReason)
+                                .foregroundStyle(app.recommendedToClose ? .orange : .secondary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Button("Close") {
+                                viewModel.closeRunningApp(app)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!app.canCloseSafely || viewModel.isClosingRunningApp)
+                        }
+                        .font(.caption)
+                        .padding(.vertical, 6)
+
+                        if app.id != viewModel.visibleRunningApps.prefix(12).last?.id {
+                            Divider().opacity(0.25)
+                        }
+                    }
+                }
+            }
+        }
+        .cardStyle()
     }
 
     private var storageOverview: some View {
@@ -165,9 +389,7 @@ struct ContentView: View {
                     .font(.headline)
                 Spacer()
                 if viewModel.isAnalyzingStorage {
-                    Text("Analyzing...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    ProgressView().controlSize(.small)
                 }
             }
 
@@ -180,52 +402,47 @@ struct ContentView: View {
                             .frame(width: max(2, geo.size.width * (Double(category.bytes) / Double(used))))
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .frame(height: 18)
 
-            ForEach(viewModel.storageBreakdownCategories.prefix(8), id: \.id) { category in
-                HStack {
-                    Circle()
-                        .fill(Color(hex: category.colorHex))
-                        .frame(width: 10, height: 10)
-                    Text(category.name)
-                        .font(.caption)
-                    Spacer()
-                    Text(ByteCountFormatter.string(fromByteCount: category.bytes, countStyle: .file))
-                        .font(.caption.monospacedDigit())
+            VStack(spacing: 6) {
+                ForEach(viewModel.storageBreakdownCategories.prefix(8), id: \.id) { category in
+                    HStack {
+                        Circle().fill(Color(hex: category.colorHex)).frame(width: 8, height: 8)
+                        Text(category.name).font(.caption)
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: category.bytes, countStyle: .file))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
-        .padding(12)
-        .background(Color.gray.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .cardStyle()
     }
 
-    private var summary: some View {
+    private var summaryCard: some View {
         HStack {
-            Text("Candidates: \(viewModel.totalFiles) files")
+            Label("Candidates: \(viewModel.totalFiles)", systemImage: "doc.text.magnifyingglass")
+            Spacer()
             Text("Potential savings: \(ByteCountFormatter.string(fromByteCount: viewModel.totalBytes, countStyle: .file))")
                 .fontWeight(.semibold)
         }
         .font(.subheadline)
+        .cardStyle()
     }
 
     private var visualInsights: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Category Breakdown")
-                    .font(.headline)
-
+                Text("Category Breakdown").font(.headline)
                 if viewModel.categoryUsageRows.isEmpty {
-                    Text("Scan dulu untuk melihat breakdown.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    emptyState(
+                        title: "No insight data",
+                        subtitle: "Run a scan to view category insights.",
+                        symbol: "chart.bar.xaxis"
+                    )
                 } else {
                     ForEach(viewModel.categoryUsageRows) { row in
                         metricBarRow(
@@ -239,18 +456,16 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(12)
-            .background(Color.gray.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .cardStyle()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Top Space Wasters")
-                    .font(.headline)
-
+                Text("Top Space Wasters").font(.headline)
                 if viewModel.topFolderRows.isEmpty {
-                    Text("Belum ada data folder dari hasil scan.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    emptyState(
+                        title: "No folder hotspots",
+                        subtitle: "Run a scan to identify large folders.",
+                        symbol: "folder.badge.questionmark"
+                    )
                 } else {
                     ForEach(viewModel.topFolderRows) { row in
                         metricBarRow(
@@ -264,36 +479,85 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(12)
-            .background(Color.gray.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .cardStyle()
         }
     }
 
-    private var fileList: some View {
-        List(viewModel.items, id: \.id) { item in
-            HStack(alignment: .top, spacing: 12) {
-                Text(item.category.rawValue)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 90, alignment: .leading)
+    private var softwareInsights: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Installed Software")
+                    .font(.headline)
 
-                Text(item.risk.rawValue)
-                    .font(.caption)
-                    .foregroundStyle(item.risk == .safe ? .green : .orange)
-                    .frame(width: 52, alignment: .leading)
+                Toggle("Only uninstall recommendations", isOn: $viewModel.showRecommendedAppsOnly)
+                    .toggleStyle(.switch)
+                    .frame(width: 260)
 
-                Text(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file))
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 90, alignment: .trailing)
+                Spacer()
 
-                Text(item.path)
-                    .font(.caption)
-                    .textSelection(.enabled)
+                Button(viewModel.isLoadingInstalledApps ? "Loading..." : "Refresh Apps") {
+                    viewModel.loadInstalledApps()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(viewModel.isLoadingInstalledApps || viewModel.isUninstallingApp)
             }
-            .padding(.vertical, 2)
+
+            if viewModel.visibleInstalledApps.isEmpty {
+                if viewModel.isLoadingInstalledApps {
+                    emptyState(
+                        title: "Loading apps",
+                        subtitle: "Gathering installed software data.",
+                        symbol: "app.badge.checkmark"
+                    )
+                } else {
+                    emptyState(
+                        title: "No apps in this filter",
+                        subtitle: "Disable the recommendation filter to see all apps.",
+                        symbol: "line.3.horizontal.decrease.circle"
+                    )
+                }
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.visibleInstalledApps.prefix(16)), id: \.id) { app in
+                        HStack(spacing: 10) {
+                            Text(app.name)
+                                .frame(width: 190, alignment: .leading)
+                                .lineLimit(1)
+
+                            Text(ByteCountFormatter.string(fromByteCount: app.sizeBytes, countStyle: .file))
+                                .font(.caption.monospacedDigit())
+                                .frame(width: 90, alignment: .trailing)
+
+                            Text(lastUsedLabel(app.lastUsedAt))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 120, alignment: .leading)
+
+                            Text(app.recommendationReason)
+                                .foregroundStyle(app.recommendation == .uninstallCandidate ? .orange : .secondary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Button("Install") { openAppStoreSearch(for: app.name) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+
+                            Button("Uninstall") { appToUninstall = app }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(viewModel.isUninstallingApp)
+                        }
+                        .font(.caption)
+                        .padding(.vertical, 6)
+
+                        if app.id != viewModel.visibleInstalledApps.prefix(16).last?.id {
+                            Divider().opacity(0.25)
+                        }
+                    }
+                }
+            }
         }
-        .listStyle(.inset)
+        .cardStyle()
     }
 
     private var duplicateInsights: some View {
@@ -302,11 +566,15 @@ struct ContentView: View {
                 Text("Duplicate Finder")
                     .font(.headline)
                 Spacer()
-                Button {
+                Text("Reclaimable: \(ByteCountFormatter.string(fromByteCount: viewModel.totalDuplicateReclaimableBytes, countStyle: .file))")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+
+                Button(viewModel.isCleaningDuplicates ? "Cleaning..." : "Clean Duplicate Copies") {
                     showCleanDuplicatesConfirm = true
-                } label: {
-                    Text(viewModel.isCleaningDuplicates ? "Cleaning..." : "Clean Duplicate Copies")
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(
                     viewModel.isScanning ||
                     viewModel.isCleaning ||
@@ -314,16 +582,14 @@ struct ContentView: View {
                     viewModel.isCleaningDuplicates ||
                     viewModel.duplicateItemsToDelete.isEmpty
                 )
-
-                Text("Reclaimable: \(ByteCountFormatter.string(fromByteCount: viewModel.totalDuplicateReclaimableBytes, countStyle: .file))")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
             }
 
             if viewModel.duplicateGroups.isEmpty {
-                Text("Klik \"Find Duplicates\" setelah scan untuk mendeteksi file duplikat.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                emptyState(
+                    title: "No duplicate analysis yet",
+                    subtitle: "Click Find Duplicates after scanning.",
+                    symbol: "doc.on.doc.fill"
+                )
             } else {
                 Text("Candidate files to delete: \(viewModel.duplicateItemsToDelete.count)")
                     .font(.caption)
@@ -347,76 +613,59 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(12)
-        .background(Color.gray.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .cardStyle()
     }
 
-    private var softwareInsights: some View {
+    private var fileList: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Installed Software")
-                    .font(.headline)
+            Text("Scanned Files")
+                .font(.headline)
 
-                Toggle("Hanya rekomendasi uninstall", isOn: $viewModel.showRecommendedAppsOnly)
-                    .toggleStyle(.switch)
-                    .frame(width: 260)
-
-                Spacer()
-
-                Button {
-                    viewModel.loadInstalledApps()
-                } label: {
-                    Text(viewModel.isLoadingInstalledApps ? "Loading..." : "Refresh Apps")
-                }
-                .disabled(viewModel.isLoadingInstalledApps || viewModel.isUninstallingApp)
-            }
-
-            if viewModel.visibleInstalledApps.isEmpty {
-                Text(viewModel.isLoadingInstalledApps ? "Memuat daftar aplikasi..." : "Tidak ada aplikasi dalam filter saat ini.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if viewModel.items.isEmpty {
+                emptyState(
+                    title: "No scanned files",
+                    subtitle: "Run Scan to populate cleanup candidates.",
+                    symbol: "doc.text.magnifyingglass"
+                )
             } else {
-                ForEach(Array(viewModel.visibleInstalledApps.prefix(12)), id: \.id) { app in
-                    HStack(alignment: .center, spacing: 10) {
-                        Text(app.name)
-                            .font(.caption)
-                            .frame(width: 180, alignment: .leading)
-                            .lineLimit(1)
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.items.prefix(120)), id: \.id) { item in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(item.category.rawValue)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 100, alignment: .leading)
 
-                        Text(ByteCountFormatter.string(fromByteCount: app.sizeBytes, countStyle: .file))
-                            .font(.caption.monospacedDigit())
-                            .frame(width: 90, alignment: .trailing)
+                            Text(item.risk.rawValue)
+                                .foregroundStyle(item.risk == .safe ? .green : .orange)
+                                .frame(width: 56, alignment: .leading)
 
-                        Text(lastUsedLabel(app.lastUsedAt))
-                            .font(.caption)
-                            .frame(width: 140, alignment: .leading)
-                            .foregroundStyle(.secondary)
+                            Text(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file))
+                                .font(.caption.monospacedDigit())
+                                .frame(width: 96, alignment: .trailing)
 
-                        Text(app.recommendationReason)
-                            .font(.caption2)
-                            .foregroundStyle(app.recommendation == .uninstallCandidate ? .orange : .secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Button("Install") {
-                            openAppStoreSearch(for: app.name)
+                            Text(item.path)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
                         }
                         .font(.caption)
+                        .padding(.vertical, 5)
 
-                        Button("Uninstall") {
-                            appToUninstall = app
+                        if item.id != viewModel.items.prefix(120).last?.id {
+                            Divider().opacity(0.25)
                         }
-                        .font(.caption)
-                        .disabled(viewModel.isUninstallingApp)
                     }
-                    .padding(.vertical, 3)
+                }
+
+                if viewModel.items.count > 120 {
+                    Text("... and \(viewModel.items.count - 120) more files")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 6)
                 }
             }
         }
-        .padding(12)
-        .background(Color.gray.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .cardStyle()
     }
 
     private var footer: some View {
@@ -427,9 +676,20 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            Text("Tip: jalankan scan dulu, review hasil, lalu clean.")
+            Text("Tip: run scan first, review results, then clean.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private func metric(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.medium))
         }
     }
 
@@ -471,6 +731,34 @@ struct ContentView: View {
         if let url = URL(string: "macappstore://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?media=software&term=\(encoded)") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func emptyState(title: String, subtitle: String, symbol: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private extension View {
+    func cardStyle() -> some View {
+        self
+            .padding(14)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
     }
 }
 
