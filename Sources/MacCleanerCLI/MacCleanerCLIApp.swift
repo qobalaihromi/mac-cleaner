@@ -60,6 +60,91 @@ struct MacCleanerCLIApp {
 
             exit(0)
 
+        case let .cleanDuplicates(yes, includeReview, limit, groups):
+            let plan = await service.duplicateCleanupPlan(
+                includeReviewItems: includeReview,
+                limit: limit,
+                maxGroups: groups
+            )
+
+            guard !plan.groups.isEmpty, !plan.itemsToDelete.isEmpty else {
+                print("No duplicate cleanup candidates found in current scan scope.")
+                exit(0)
+            }
+
+            let reclaimable = ByteCountFormatter.string(fromByteCount: plan.reclaimableBytes, countStyle: .file)
+            print("Duplicate groups: \(plan.groups.count)")
+            print("Files to delete : \(plan.itemsToDelete.count)")
+            print("Potential reclaimable: \(reclaimable)")
+
+            guard yes || confirm(prompt: "Move duplicate copies to Trash? [y/N]: ") else {
+                print("Cancelled.")
+                exit(0)
+            }
+
+            let result = service.clean(items: plan.itemsToDelete)
+            print("Cleanup success: \(result.succeeded.count)")
+            print("Cleanup failed: \(result.failed.count)")
+            print("Freed space: \(ByteCountFormatter.string(fromByteCount: result.totalFreedBytes, countStyle: .file))")
+            if let manifestPath = result.manifestPath {
+                print("Manifest: \(manifestPath)")
+            }
+
+            if !result.failed.isEmpty {
+                for failure in result.failed.prefix(10) {
+                    print("FAILED: \(failure.item.path) -> \(failure.error.localizedDescription)")
+                }
+                exit(1)
+            }
+
+            exit(0)
+
+        case let .restore(yes, latest, manifestPath):
+            do {
+                let resolvedManifestPath: String
+                if let manifestPath, !manifestPath.isEmpty {
+                    resolvedManifestPath = manifestPath
+                } else if latest {
+                    guard let latestPath = try service.latestManifestPath() else {
+                        print("No manifest found in ~/.mac-cleaner/manifests/")
+                        exit(1)
+                    }
+                    resolvedManifestPath = latestPath
+                } else {
+                    print("Please provide --manifest PATH or use --latest")
+                    exit(1)
+                }
+
+                print("Manifest: \(resolvedManifestPath)")
+                guard yes || confirm(prompt: "Restore files from this manifest? [y/N]: ") else {
+                    print("Cancelled.")
+                    exit(0)
+                }
+
+                let result = try service.restoreFromManifest(path: resolvedManifestPath)
+                print("Restore success: \(result.restored.count)")
+                print("Restore skipped: \(result.skipped.count)")
+                print("Restore failed : \(result.failed.count)")
+
+                if !result.skipped.isEmpty {
+                    for entry in result.skipped.prefix(10) {
+                        print("SKIPPED: \(entry.entry.originalPath) -> \(entry.reason)")
+                    }
+                }
+
+                if !result.failed.isEmpty {
+                    for entry in result.failed.prefix(10) {
+                        print("FAILED: \(entry.entry.originalPath) -> \(entry.error.localizedDescription)")
+                    }
+                    exit(1)
+                }
+
+                exit(0)
+            } catch {
+                print("Restore failed: \(error.localizedDescription)")
+                exit(1)
+            }
+
         case let .storage(json):
             do {
                 let usage = try service.storageUsage()

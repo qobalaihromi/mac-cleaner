@@ -4,6 +4,8 @@ import MacCleanerCore
 enum CLICommand {
     case scan(json: Bool, includeReview: Bool, limit: Int?)
     case clean(yes: Bool, includeReview: Bool, limit: Int?)
+    case cleanDuplicates(yes: Bool, includeReview: Bool, limit: Int?, groups: Int?)
+    case restore(yes: Bool, latest: Bool, manifestPath: String?)
     case storage(json: Bool)
     case duplicates(json: Bool, includeReview: Bool, limit: Int?, groups: Int?)
     case rules
@@ -30,6 +32,19 @@ enum CLIParser {
                 yes: flags.contains("--yes"),
                 includeReview: flags.contains("--include-review"),
                 limit: intValue(after: "--limit", in: flags)
+            )
+        case "clean-duplicates":
+            return .cleanDuplicates(
+                yes: flags.contains("--yes"),
+                includeReview: flags.contains("--include-review"),
+                limit: intValue(after: "--limit", in: flags),
+                groups: intValue(after: "--groups", in: flags)
+            )
+        case "restore":
+            return .restore(
+                yes: flags.contains("--yes"),
+                latest: flags.contains("--latest"),
+                manifestPath: stringValue(after: "--manifest", in: flags)
             )
         case "storage":
             return .storage(json: flags.contains("--json"))
@@ -58,6 +73,8 @@ enum CLIParser {
         Usage:
           mac-cleaner scan [--json] [--include-review] [--limit N]
           mac-cleaner clean [--yes] [--include-review] [--limit N]
+          mac-cleaner clean-duplicates [--yes] [--include-review] [--limit N] [--groups N]
+          mac-cleaner restore [--latest] [--manifest PATH] [--yes]
           mac-cleaner storage [--json]
           mac-cleaner duplicates [--json] [--include-review] [--limit N] [--groups N]
           mac-cleaner rules
@@ -67,6 +84,7 @@ enum CLIParser {
           - Default clean target only includes risk=safe files.
           - --include-review will include risk=review files too.
           - Cleanup always moves files to Trash, not permanent delete.
+          - Restore will move files from Trash back to original paths.
           - Config file: ~/.mac-cleaner/config.json
         """)
     }
@@ -76,6 +94,13 @@ enum CLIParser {
             return nil
         }
         return Int(flags[idx + 1])
+    }
+
+    private static func stringValue(after flag: String, in flags: [String]) -> String? {
+        guard let idx = flags.firstIndex(of: flag), flags.indices.contains(idx + 1) else {
+            return nil
+        }
+        return flags[idx + 1]
     }
 }
 

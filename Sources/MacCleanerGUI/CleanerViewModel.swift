@@ -23,6 +23,11 @@ final class CleanerViewModel: ObservableObject {
     @Published var isScanning = false
     @Published var isCleaning = false
     @Published var isFindingDuplicates = false
+    @Published var isCleaningDuplicates = false
+    @Published var isRestoring = false
+    @Published var isAnalyzingStorage = false
+    @Published var isLoadingInstalledApps = false
+    @Published var isUninstallingApp = false
     @Published var includeReview = false
     @Published var limitText = ""
     @Published var statusMessage = "Ready"
@@ -31,7 +36,11 @@ final class CleanerViewModel: ObservableObject {
     @Published var storageUsedBytes: Int64 = 0
     @Published var storageFreeBytes: Int64 = 0
     @Published var storageUsedRatio: Double = 0
+    @Published var storageBreakdownCategories: [StorageCategoryUsage] = []
+    @Published var installedApps: [InstalledAppInfo] = []
+    @Published var showRecommendedAppsOnly = true
     @Published var duplicateGroups: [DuplicateFileGroup] = []
+    @Published var duplicateItemsToDelete: [FileItem] = []
 
     private let service = CleanupService()
 
@@ -44,7 +53,14 @@ final class CleanerViewModel: ObservableObject {
     }
 
     var totalDuplicateReclaimableBytes: Int64 {
-        duplicateGroups.reduce(0) { $0 + $1.reclaimableBytes }
+        duplicateItemsToDelete.reduce(0) { $0 + $1.sizeBytes }
+    }
+
+    var visibleInstalledApps: [InstalledAppInfo] {
+        if showRecommendedAppsOnly {
+            return installedApps.filter { $0.recommendation == .uninstallCandidate }
+        }
+        return installedApps
     }
 
     var categoryUsageRows: [CategoryUsageRow] {
@@ -99,6 +115,8 @@ final class CleanerViewModel: ObservableObject {
 
     init() {
         refreshStorage()
+        analyzeStorageBreakdown()
+        loadInstalledApps()
     }
 
     func scan() {
@@ -110,9 +128,12 @@ final class CleanerViewModel: ObservableObject {
             let scanned = await service.scan(includeReviewItems: includeReview, limit: limit)
             items = scanned
             duplicateGroups = []
+            duplicateItemsToDelete = []
             isScanning = false
             statusMessage = "Scan complete: \(scanned.count) files"
             refreshStorage()
+            analyzeStorageBreakdown()
+            loadInstalledApps()
         }
     }
 
@@ -135,8 +156,10 @@ final class CleanerViewModel: ObservableObject {
             let limit = normalizedLimit()
             items = await service.scan(includeReviewItems: includeReview, limit: limit)
             duplicateGroups = []
+            duplicateItemsToDelete = []
             isCleaning = false
             refreshStorage()
+            analyzeStorageBreakdown()
         }
     }
 
@@ -145,20 +168,74 @@ final class CleanerViewModel: ObservableObject {
         statusMessage = "Finding duplicates..."
 
         Task {
-            let limit = normalizedLimit()
-            let groups = await service.duplicateGroups(
-                includeReviewItems: includeReview,
-                limit: limit,
-                maxGroups: 20
-            )
-            duplicateGroups = groups
+            let plan = service.duplicateCleanupPlan(from: items, maxGroups: 20)
+            duplicateGroups = plan.groups
+            duplicateItemsToDelete = plan.itemsToDelete
             isFindingDuplicates = false
 
             let reclaimable = ByteCountFormatter.string(
                 fromByteCount: totalDuplicateReclaimableBytes,
                 countStyle: .file
             )
-            statusMessage = "Duplicate scan complete: \(groups.count) groups, reclaimable \(reclaimable)"
+            statusMessage = "Duplicate scan complete: \(plan.groups.count) groups, reclaimable \(reclaimable)"
+        }
+    }
+
+    func cleanDuplicateCopies() {
+        guard !duplicateItemsToDelete.isEmpty else {
+            statusMessage = "No duplicate cleanup candidates"
+            return
+        }
+
+        isCleaningDuplicates = true
+        statusMessage = "Cleaning duplicate copies..."
+
+        Task {
+            let result = service.clean(items: duplicateItemsToDelete)
+            let freed = ByteCountFormatter.string(fromByteCount: result.totalFreedBytes, countStyle: .file)
+            statusMessage = "Duplicate cleanup done. Freed \(freed). Success: \(result.succeeded.count), Failed: \(result.failed.count)"
+            lastManifestPath = result.manifestPath ?? lastManifestPath
+
+            let limit = normalizedLimit()
+            items = await service.scan(includeReviewItems: includeReview, limit: limit)
+            let refreshedPlan = service.duplicateCleanupPlan(from: items, maxGroups: 20)
+            duplicateGroups = refreshedPlan.groups
+            duplicateItemsToDelete = refreshedPlan.itemsToDelete
+            refreshStorage()
+            analyzeStorageBreakdown()
+            loadInstalledApps()
+            isCleaningDuplicates = false
+        }
+    }
+
+    func restoreLatestCleanup() {
+        isRestoring = true
+        statusMessage = "Restoring..."
+
+        Task {
+            do {
+                guard let manifestPath = try service.latestManifestPath() else {
+                    statusMessage = "No cleanup manifest found"
+                    isRestoring = false
+                    return
+                }
+
+                let result = try service.restoreFromManifest(path: manifestPath)
+                lastManifestPath = manifestPath
+                statusMessage = "Restore done. Success: \(result.restored.count), Skipped: \(result.skipped.count), Failed: \(result.failed.count)"
+
+                let limit = normalizedLimit()
+                items = await service.scan(includeReviewItems: includeReview, limit: limit)
+                duplicateGroups = []
+                duplicateItemsToDelete = []
+                refreshStorage()
+                analyzeStorageBreakdown()
+                loadInstalledApps()
+            } catch {
+                statusMessage = "Restore failed: \(error.localizedDescription)"
+            }
+
+            isRestoring = false
         }
     }
 
@@ -171,6 +248,48 @@ final class CleanerViewModel: ObservableObject {
             storageUsedRatio = usage.usedRatio
         } catch {
             statusMessage = "Failed to read storage info"
+        }
+    }
+
+    func analyzeStorageBreakdown() {
+        guard !isAnalyzingStorage else { return }
+        isAnalyzingStorage = true
+        Task {
+            let result = try? service.storageBreakdown()
+            if let result {
+                storageBreakdownCategories = result.categories
+            }
+            isAnalyzingStorage = false
+        }
+    }
+
+    func loadInstalledApps() {
+        guard !isLoadingInstalledApps else { return }
+        isLoadingInstalledApps = true
+
+        Task {
+            let apps = service.installedApps()
+            installedApps = apps
+            isLoadingInstalledApps = false
+        }
+    }
+
+    func uninstallApp(_ app: InstalledAppInfo) {
+        guard !isUninstallingApp else { return }
+        isUninstallingApp = true
+        statusMessage = "Uninstalling \(app.name)..."
+
+        Task {
+            do {
+                try service.uninstallApp(path: app.path)
+                statusMessage = "Moved \(app.name) to Trash"
+                refreshStorage()
+                analyzeStorageBreakdown()
+                loadInstalledApps()
+            } catch {
+                statusMessage = "Failed to uninstall \(app.name): \(error.localizedDescription)"
+            }
+            isUninstallingApp = false
         }
     }
 

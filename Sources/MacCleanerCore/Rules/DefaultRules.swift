@@ -49,6 +49,38 @@ public struct DefaultRulesProvider: CleanupRuleProviding {
                 category: .trashOld,
                 rootPath: home + "/.Trash",
                 minAgeDays: 14
+            ),
+            CleanupRule(
+                id: "antigravity-recordings",
+                category: .agentRecording,
+                rootPath: home + "/.antigravity",
+                includePatterns: [
+                    "*recordings*.mp4",
+                    "*recordings*.webm",
+                    "*recordings*.mov",
+                    "*recordings*.mkv",
+                    "*captures*.mp4",
+                    "*captures*.webm",
+                    "*captures*.mov",
+                    "*captures*.mkv"
+                ],
+                minAgeDays: 3
+            ),
+            CleanupRule(
+                id: "antigravity-cockpit-recordings",
+                category: .agentRecording,
+                rootPath: home + "/.antigravity_cockpit",
+                includePatterns: [
+                    "*recordings*.mp4",
+                    "*recordings*.webm",
+                    "*recordings*.mov",
+                    "*recordings*.mkv",
+                    "*captures*.mp4",
+                    "*captures*.webm",
+                    "*captures*.mov",
+                    "*captures*.mkv"
+                ],
+                minAgeDays: 3
             )
         ]
 

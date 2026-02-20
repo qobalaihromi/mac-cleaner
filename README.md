@@ -10,7 +10,10 @@ Fokus utama: melonggarkan storage dengan scan junk file lalu cleanup aman ke Tra
 - Scan junk files user-level (`Caches`, `Logs`, browser caches, temp files, old trash)
 - Ringkasan potensi storage yang bisa dibebaskan
 - Visual insight: breakdown per kategori + top space wasters
+- Storage overview di homepage: stacked bar + kategori pemakaian (Applications, Documents, Developer, dll.)
 - Duplicate finder (hash-based) untuk deteksi file duplikat
+- Restore/Undo cleanup dari manifest terakhir
+- Agent recording cleanup (`~/.antigravity`, `~/.antigravity_cockpit`) untuk file video recording/capture lama
 - Kategori + level risiko (`safe`, `review`)
 - Cleanup ke Trash (bukan permanent delete)
 - Manifest hasil cleanup di `~/.mac-cleaner/manifests/`
@@ -52,10 +55,12 @@ Atau jalankan GUI langsung tanpa install:
 mac-cleaner help
 mac-cleaner storage
 mac-cleaner duplicates
+mac-cleaner clean-duplicates --yes
 mac-cleaner rules
 mac-cleaner init-config
 mac-cleaner scan
 mac-cleaner clean
+mac-cleaner restore --latest
 ```
 
 Contoh:
@@ -63,7 +68,10 @@ Contoh:
 mac-cleaner scan --limit 200
 mac-cleaner storage --json
 mac-cleaner duplicates --groups 20
+mac-cleaner clean-duplicates --groups 20 --yes
 mac-cleaner clean --yes --limit 200
+mac-cleaner restore --latest --yes
+mac-cleaner restore --manifest ~/.mac-cleaner/manifests/cleanup-YYYYMMDD-HHMMSS.json --yes
 mac-cleaner clean --include-review --yes
 ```
 
@@ -96,3 +104,9 @@ Contoh `~/.mac-cleaner/config.json`:
 ./scripts/uninstall.sh
 rm -rf "$HOME/Applications/Mac Cleaner.app"
 ```
+
+## Installed Software Insights
+- Menampilkan daftar software terinstal dengan ukuran storage.
+- Menampilkan estimasi terakhir digunakan (relative time).
+- Memberi rekomendasi aplikasi kandidat uninstall (jarang/tidak pernah dipakai dan size besar).
+- Tombol `Uninstall` (move to Trash) dan tombol `Install` (buka pencarian App Store).

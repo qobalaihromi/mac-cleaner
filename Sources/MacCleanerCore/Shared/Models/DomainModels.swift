@@ -6,6 +6,7 @@ public enum JunkCategory: String, Codable, CaseIterable {
     case browserCache
     case tempFile
     case trashOld
+    case agentRecording
 }
 
 public enum RiskLevel: String, Codable {

@@ -17,7 +17,7 @@ public struct RiskClassifier: RiskClassifying {
         switch category {
         case .trashOld:
             return .safe
-        case .userCache, .browserCache, .appLog:
+        case .userCache, .browserCache, .appLog, .agentRecording:
             return .safe
         case .tempFile:
             return .review
